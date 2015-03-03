@@ -22,7 +22,7 @@ First you'll need to add the required settings in the App.config/Web.config:
 <add key="auth0:ConnectionName" value="FabrikamAD" />
 ```
 
-And now you can use the `AdConnectorClient` for headless Kerberos authentication and to get the user's claims:
+And now you can use the `AdConnectorClient` for headless Kerberos authentication and to get the **current user**'s claims:
 
 ```csharp
 var client = new AdConnectorClient(
