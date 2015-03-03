@@ -57,7 +57,7 @@ namespace Auth0.AdConnector.KerberosSample
             return GetToken().Assertion.Statements
                 .OfType<SamlAttributeStatement>()
                 .SelectMany(s => s.Attributes)
-                .ToDictionary(a => a.Name, a => a.AttributeValues.ToArray());
+                .ToDictionary(a => a.Namespace + "/" + a.Name, a => a.AttributeValues.ToArray());
         }
 
         /// <summary>
