@@ -12,84 +12,56 @@ namespace Auth0.AdConnector.KerberosSample
 {
     public class AdConnectorClient
     {
+        private const string DefaultCallbackUrl =
+            "http://headless.local";
+
         private const string LoginCallbackEndpoint =
             "https://{0}/login/callback";
 
-        private const string WsFederationEndpoint =
-            "https://{0}/wsfed/{1}";
-
         private const string AuthorizeEndpoint =
-            "https://{0}/authorize?scope=openid&response_type=code&connection={1}&sso=true&protocol=wsfed&state=&client_id={2}";
+            "https://{0}/authorize?scope={4}&response_type=token&connection={1}&sso=true&state=&client_id={2}&redirect_uri={3}";
 
-        private const string ConnectorWsFederationEndpoint =
-            "{0}/wsfed?state=none&wtrealm=urn%3Aauth0%3A{1}&wa=wsignin1.0&wreply=https%3A%2F%2F{2}%2Flogin%2Fcallback";
-
-        private readonly string _connectorUrl;
-        private readonly string _tenantName;
+        private readonly string _scope;
         private readonly string _domain;
         private readonly string _clientId;
         private readonly string _connectionName;
+        private readonly string _callbackUrl;
 
-        public AdConnectorClient(string connectorUrl, string tenantName, string domain, string clientId,
-            string connectionName)
+        public AdConnectorClient(string domain, string clientId, string connectionName, string scope = "openid", string callbackUrl = null)
         {
-            _connectorUrl = connectorUrl;
-            _tenantName = tenantName;
+            _scope = scope;
             _domain = domain;
             _clientId = clientId;
             _connectionName = connectionName;
+            _callbackUrl = callbackUrl ?? DefaultCallbackUrl;
         }
 
-        /// <summary>
-        /// Get a SamlSecurityToken which contains all assertions.
-        /// </summary>
-        /// <returns></returns>
-        public SamlSecurityToken GetToken()
+        public IDictionary<string, string> Authenticate()
         {
-            var cookies = GetCookies();
-            var wreply = GetConnectorWreply();
-            var loginResponse = PostLoginCallback(wreply, cookies);
-            return ReadSecurityToken(loginResponse);
-        }
-
-        public IDictionary<string, string[]> GetTokenClaims()
-        {
-            return GetToken().Assertion.Statements
-                .OfType<SamlAttributeStatement>()
-                .SelectMany(s => s.Attributes)
-                .ToDictionary(a => a.Namespace + "/" + a.Name, a => a.AttributeValues.ToArray());
+            var authorizeResult = CallAuthorize();
+            var wreply = GetConnectorWreply(authorizeResult.Location);
+            var loginResponse = PostLoginCallback(wreply, authorizeResult.Cookies);
+            return loginResponse.Split('#')[1].Split('&')
+                .ToDictionary(c => c.Split('=')[0], c => Uri.UnescapeDataString(c.Split('=')[1]));
         }
 
         /// <summary>
         /// Get the cookie from the authorize endpoint which will be used when posting the wresult back to Auth0.
         /// </summary>
         /// <returns></returns>
-        private CookieCollection GetCookies()
+        private AuthorizeResult CallAuthorize()
         {
-            try
+            var authorizeRequest = WebRequest.Create(String.Format(AuthorizeEndpoint, _domain, _connectionName, _clientId, WebUtility.UrlEncode(_callbackUrl), _scope)) as HttpWebRequest;
+            authorizeRequest.CookieContainer = new CookieContainer();
+            authorizeRequest.AllowAutoRedirect = false;
+
+            using (var response = authorizeRequest.GetResponse() as HttpWebResponse)
             {
-                var wsFedRequest =
-                    WebRequest.Create(String.Format(WsFederationEndpoint, _domain, _clientId)) as HttpWebRequest;
-                wsFedRequest.CookieContainer = new CookieContainer();
-                wsFedRequest.AllowAutoRedirect = false;
-
-                var cookies = new CookieCollection();
-                using (var response = wsFedRequest.GetResponse() as HttpWebResponse)
-                    cookies = response.Cookies;
-
-                var authorizeRequest =
-                    WebRequest.Create(String.Format(AuthorizeEndpoint, _domain, _connectionName, _clientId)) as
-                        HttpWebRequest;
-                authorizeRequest.CookieContainer = new CookieContainer();
-                authorizeRequest.CookieContainer.Add(cookies);
-                authorizeRequest.AllowAutoRedirect = false;
-
-                using (var response = authorizeRequest.GetResponse() as HttpWebResponse)
-                    return response.Cookies;
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("Could not get SSO cookie.", ex);
+                return new AuthorizeResult
+                {
+                    Cookies = response.Cookies,
+                    Location = response.Headers["Location"]
+                };
             }
         }
 
@@ -97,22 +69,14 @@ namespace Auth0.AdConnector.KerberosSample
         /// Get a WS-Federation reply from the connector which can be posted to Auth0.
         /// </summary>
         /// <returns></returns>
-        private string GetConnectorWreply()
+        private string GetConnectorWreply(string location)
         {
-            try
+            using (var connectorClient = new WebClient())
             {
-                using (var connectorClient = new WebClient())
-                {
-                    connectorClient.Credentials = CredentialCache.DefaultNetworkCredentials;
+                connectorClient.Credentials = CredentialCache.DefaultNetworkCredentials;
 
-                    var wsFedRequest = connectorClient.DownloadString(
-                        String.Format(ConnectorWsFederationEndpoint, _connectorUrl.TrimEnd('/'), _tenantName, _domain));
-                    return ParseWsFederationForm(wsFedRequest);
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("Error authenticating to the AD Connector.", ex);
+                var wsFedRequest = connectorClient.DownloadString(location);
+                return ParseWsFederationForm(wsFedRequest);
             }
         }
 
@@ -152,52 +116,25 @@ namespace Auth0.AdConnector.KerberosSample
                 byte[] data =
                     Encoding.ASCII.GetBytes("wa=wsignin1.0&wctx=undefined&wresult=" + WebUtility.UrlEncode(wresult));
 
-                var request = (HttpWebRequest) HttpWebRequest.Create(String.Format(LoginCallbackEndpoint, _domain));
+                var request = (HttpWebRequest)HttpWebRequest.Create(String.Format(LoginCallbackEndpoint, _domain));
                 request.Method = "POST";
                 request.ContentType = "application/x-www-form-urlencoded";
                 request.ContentLength = data.Length;
                 request.CookieContainer = new CookieContainer();
                 request.CookieContainer.Add(cookies);
+                request.AllowAutoRedirect = false;
 
                 var requestStream = request.GetRequestStream();
                 requestStream.Write(data, 0, data.Length);
                 requestStream.Close();
 
-                using (var response = (HttpWebResponse) request.GetResponse())
-                using (var responseStream = response.GetResponseStream())
-                {
-                    using (var responseReader = new StreamReader(responseStream, Encoding.Default))
-                        return ParseWsFederationForm(responseReader.ReadToEnd());
-                }
+                // Get the location.s
+                using (var response = (HttpWebResponse)request.GetResponse())
+                    return response.Headers["Location"];
             }
             catch (Exception ex)
             {
                 throw new InvalidOperationException("Error processing login response.", ex);
-            }
-        }
-
-        /// <summary>
-        /// Get the security token for a response.
-        /// </summary>
-        /// <param name="response"></param>
-        /// <returns></returns>
-        public SamlSecurityToken ReadSecurityToken(string response)
-        {
-            try
-            {
-                using (var sr = new StringReader(response))
-                using (var reader = XmlReader.Create(sr))
-                {
-                    if (!reader.ReadToFollowing("saml:Assertion"))
-                        throw new Exception("Assertion not found!");
-
-                    return SecurityTokenHandlerCollection.CreateDefaultSecurityTokenHandlerCollection()
-                        .ReadToken(reader.ReadSubtree()) as SamlSecurityToken;
-                }
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException("Error processing SAML assertions.", ex);
             }
         }
     }

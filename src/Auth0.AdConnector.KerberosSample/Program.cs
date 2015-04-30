@@ -8,16 +8,15 @@ namespace Auth0.AdConnector.KerberosSample
         static void Main(string[] args)
         {
             var client = new AdConnectorClient(
-                ConfigurationManager.AppSettings["auth0:ADConnectorUrl"],
-                ConfigurationManager.AppSettings["auth0:TenantName"],
                 ConfigurationManager.AppSettings["auth0:Domain"],
                 ConfigurationManager.AppSettings["auth0:ClientID"],
-                ConfigurationManager.AppSettings["auth0:ConnectionName"]);
+                ConfigurationManager.AppSettings["auth0:ConnectionName"],
+                "openid email nickname");
 
-            var claims = client.GetTokenClaims();
-            foreach (var claim in claims)
+            var result = client.Authenticate();
+            foreach (var item in result)
             {
-                Console.WriteLine(" > {0}: {1}", claim.Key, String.Join(", ", claim.Value));
+                Console.WriteLine(" > {0}: {1}", item.Key, String.Join(", ", item.Value));
             }
 
             Console.ReadLine();

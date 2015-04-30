@@ -6,42 +6,43 @@ Sample project showing how to do headless Kerberos authentication with Auth0 (fo
 
 Use "Integrated Windows Authentication" (Kerberos) from your Console applications, Windows Services, ... with Auth0. This allows you to have Kerberos support for headless application that run in the context of a Windows User (on a Domain Joined machine).
 
-## Install
-
-You'll typically want to use this to end up with an `id_token` which you can then use to call APIs secured with Auth0. By default the id_token is not part for the SAML response. If you need the `id_token` you'll need to add a rule to add it to the outgoing claims: [Generate a JSON Web Token](https://github.com/auth0/rules/blob/master/rules/jwt.md)
-
 ## Usage
 
-First you'll need to add the required settings in the App.config/Web.config:
+First you'll need to configure your application in Auth0. Add the following URL as a Callback URL in Auth0:
+
+```
+http://headless.local
+```
+
+Then add the required settings in the App.config/Web.config:
 
 ```xml
 <add key="auth0:Domain" value="fabrikam.auth0.com" />
-<add key="auth0:TenantName" value="fabrikam" />
-<add key="auth0:ADConnectorUrl" value="http://fabrikam-dc:57303" />
 <add key="auth0:ClientID" value="yNqQMENaYIONxAaQmrct341tZ9joEjTi" />
 <add key="auth0:ConnectionName" value="FabrikamAD" />
 ```
 
-And now you can use the `AdConnectorClient` for headless Kerberos authentication and to get the **current user**'s claims:
+And now you can use the `AdConnectorClient` for headless Kerberos authentication and to get a token for the current user:
 
 ```csharp
 var client = new AdConnectorClient(
-    ConfigurationManager.AppSettings["auth0:ADConnectorUrl"],
-    ConfigurationManager.AppSettings["auth0:TenantName"],
-    ConfigurationManager.AppSettings["auth0:Domain"],
-    ConfigurationManager.AppSettings["auth0:ClientID"],
-    ConfigurationManager.AppSettings["auth0:ConnectionName"]);
+	ConfigurationManager.AppSettings["auth0:Domain"],
+	ConfigurationManager.AppSettings["auth0:ClientID"],
+	ConfigurationManager.AppSettings["auth0:ConnectionName"],
+	"openid email nickname");
 
-var claims = client.GetTokenClaims();
-foreach (var claim in claims)
+var result = client.Authenticate();
+foreach (var item in result)
 {
-    Console.WriteLine(" > {0}\r\n   {1}\r\n", claim.Key, String.Join(", ", claim.Value));
+	Console.WriteLine(" > {0}: {1}", item.Key, String.Join(", ", item.Value));
 }
 ```
 
+*Note: Since you can specify the scope used for authentication, you can ask for additional information or even request a refresh token.*
+
 Example:
 
-![](https://cdn.auth0.com/docs/img/ad-kerberos-headless.png)
+![](https://cdn.auth0.com/docs/img/ad-headless-result.png)
 
 ## What is Auth0?
 
